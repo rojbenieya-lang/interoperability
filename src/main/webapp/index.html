@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Client REST - Gestion Options (JWT)</title>
+<style>
+  body { font-family: Arial, sans-serif; max-width: 520px; margin: 30px auto; }
+  fieldset { margin-bottom: 20px; }
+  label { display: inline-block; width: 110px; margin: 4px 0; }
+  input[type=text], input[type=password] { width: 280px; }
+  #etat { color: #555; font-size: 0.9em; }
+</style>
+<script language="javascript">
+// URL de base : même serveur que la page (évite le blocage CORS)
+var API = location.pathname.replace(/\/[^\/]*$/, "") + "/rest";
+var accessToken = null, refreshToken = null;   // jetons JWT
+
+function newRequest() { return new XMLHttpRequest(); }   // un XHR par requête
+
+function etat(msg) { document.getElementById("etat").innerText = msg; }
+
+// Étape 1 : authentification
+function login() {
+  var username = document.getElementById("username").value;
+  var password = document.getElementById("password").value;
+  var xmlhttp = newRequest();
+  xmlhttp.open('POST', API + "/authentication", true);
+  xmlhttp.setRequestHeader('Content-Type', 'application/json');
+  xmlhttp.onreadystatechange = function() {
+    if (xmlhttp.readyState == 4) {
+      if (xmlhttp.status == 200) {
+        var tokens = JSON.parse(xmlhttp.responseText);
+        accessToken  = tokens.accessToken;
+        refreshToken = tokens.refreshToken;
+        etat("Connecté : jetons reçus (accessToken valable " + tokens.expiresIn + ").");
+      } else {
+        alert("Login failed: " + xmlhttp.status);
+      }
+    }
+  };
+  xmlhttp.send(JSON.stringify({ username: username, password: password }));
+}
+
+// Étape 2 : appel du service sécurisé
+// dejaRetente = true quand on rejoue la requête après un refresh (évite une boucle infinie)
+function getOptions(dejaRetente) {
+  if (accessToken == null) { alert("Connectez-vous d'abord."); return; }
+  var domaine = document.getElementById("domaine");
+  var code = document.getElementById("code");
+  var libelle = document.getElementById("libelle");
+  var responsable = document.getElementById("responsable");
+
+  var xmlhttp = newRequest();
+  var url = API + "/options?domaine=" + encodeURIComponent(domaine.value);
+  xmlhttp.open('GET', url, true);
+  xmlhttp.setRequestHeader('Authorization', 'Bearer ' + accessToken);
+
+  xmlhttp.onreadystatechange = function() {
+    if (xmlhttp.readyState == 4) {
+      if (xmlhttp.status == 200) {
+        code.value = ""; libelle.value = ""; responsable.value = "";
+        var resultat = JSON.parse(xmlhttp.responseText);
+        for (var i in resultat) {
+          code.value        += " " + resultat[i].codeOption;
+          libelle.value     += " " + resultat[i].libelle;
+          responsable.value += " " + resultat[i].responsable;
+        }
+        etat("200 OK");
+      } else if (xmlhttp.status == 401 && !dejaRetente) {
+        etat("401 : jeton expiré, rafraîchissement...");
+        refreshAndRetry();
+      } else if (xmlhttp.status == 404) {
+        code.value = ""; libelle.value = ""; responsable.value = "";
+        etat("Aucune option pour ce domaine (404).");
+      } else {
+        alert("Error -> " + xmlhttp.status);
+      }
+    }
+  };
+  xmlhttp.send(null);
+}
+
+// Jeton expiré : refresh (le serveur attend du form-urlencoded) puis nouvel essai
+function refreshAndRetry() {
+  var xmlhttp = newRequest();
+  xmlhttp.open('POST', API + "/authentication/refresh", true);
+  xmlhttp.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+  xmlhttp.onreadystatechange = function() {
+    if (xmlhttp.readyState == 4) {
+      if (xmlhttp.status == 200) {
+        var tokens = JSON.parse(xmlhttp.responseText);
+        accessToken  = tokens.accessToken;
+        refreshToken = tokens.refreshToken;   // rotation : toujours remplacer les deux
+        getOptions(true);                     // réessayer une seule fois
+      } else {
+        accessToken = null; refreshToken = null;
+        alert("Session expired: please log in again");
+        etat("Session expirée.");
+      }
+    }
+  };
+  xmlhttp.send("refreshToken=" + encodeURIComponent(refreshToken));
+}
+</script>
+</head>
+<body>
+  <h2>Tester le service Options</h2>
+
+  <fieldset>
+    <legend>Connexion</legend>
+    <label>Login :</label><input type="text" id="username"><br>
+    <label>Mot de passe :</label><input type="password" id="password"><br>
+    <input type="button" value="Se connecter" onclick="login()">
+  </fieldset>
+
+  <fieldset>
+    <legend>Options</legend>
+    <label>Domaine :</label><input type="text" id="domaine" >
+    <input type="button" value="OK" onclick="getOptions(false)"><br>
+    <label>Code :</label><input type="text" id="code"><br>
+    <label>Titre :</label><input type="text" id="libelle"><br>
+    <label>Responsable :</label><input type="text" id="responsable">
+  </fieldset>
+
+  <div id="etat"></div>
+</body>
+</html>
